@@ -1,6 +1,9 @@
 #![allow(dead_code)]
+use std::result;
+
 use model_parser_mcp::model::{
     app_state::{self, AppState},
+    config::PageConfig,
     cubs_model::ModelVersionNumber,
     model_parser::ModelParser,
 };
@@ -18,6 +21,10 @@ use serde::{Deserialize, Serialize};
 
 // https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/README.md
 // https://hackmd.io/@Hamze/S1tlKZP0kx
+
+static EMPTY: &str = "";
+static ALL: &str = "All";
+static MAX_DEPTH: usize = 20;
 
 #[derive(Clone)]
 pub struct ModelParserTool {
@@ -47,6 +54,27 @@ pub struct ModelInfoRequest {
     model_id: String,
     #[schemars(description = " Model version")]
     version_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ModelTypeQueryRequest {
+    #[schemars(description = "Unique identifier for a model in the format of UUID")]
+    model_id: String,
+    #[schemars(description = "Model version")]
+    version_number: Option<String>,
+    #[schemars(description = "Type of element to retrieve")]
+    types: String,
+    #[schemars(description = "Result pagination configuration")]
+    page_config: PageConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModelTypeQueryResult {
+    pub result: String,
+    pub elements_per_page: usize,
+    pub total_page: usize,
+    pub current_page: usize,
+    pub total_result_count: usize,
 }
 
 #[tool_router]
@@ -100,6 +128,64 @@ impl ModelParserTool {
             }
         }
     }
+
+    #[tool(description = "Get elements with type")]
+    async fn get_element_with_type(
+        &self,
+        Parameters(ModelTypeQueryRequest {
+            model_id,
+            version_number,
+            types,
+            page_config,
+        }): Parameters<ModelTypeQueryRequest>,
+    ) -> String {
+
+        let model_parser = ModelParser::new(
+            self.app_state.get_model_cache(),
+            self.app_state.get_graph_cache(),
+            self.app_state.get_pg_pool_ref(),
+        );
+        let version_number = version_number.unwrap_or("".to_string());
+
+        let result = model_parser
+            .query_model(
+                model_id.clone(),
+                version_number,
+                EMPTY.to_owned(),
+                false,
+                types,
+                ALL.to_owned(),
+                EMPTY.to_owned(),
+                MAX_DEPTH,
+                page_config,
+                EMPTY.to_owned(),
+                false,
+            )
+            .await;
+
+        match result {
+            Ok(result) => {
+                let output = ModelTypeQueryResult {
+                    result: result.data,
+                    elements_per_page: result.page_count.elements_per_page,
+                    total_page: result.page_count.total_page,
+                    current_page: result.page_count.current_page,
+                    total_result_count: result.total_result_count,
+                };
+
+                println!("page result: {:?}", result.page_count);
+                serde_json::to_string_pretty(&output).unwrap()
+            }
+            Err(e) => {
+                let error = ModelStatsErrorResult {
+                    model_id,
+                    error_msg: e.to_string(),
+                };
+                serde_json::to_string_pretty(&error).unwrap()
+            }
+        }
+    }
+    // TODO get_element_with_nature
 }
 
 // Implement the server handler

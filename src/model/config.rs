@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Default, Debug)]
+static MAX_RESULT: usize = 10;
+
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct PageConfig {
+    #[schemars(description = "Number of element contain in a single result or page")]
     pub elements_per_page: usize,
+    #[schemars(description = "The page to retrieve. For example set to 1 to retrieve first page")]
     pub page_to_get: usize,
 }
 
@@ -42,5 +48,11 @@ impl<T> OutputLine<T> {
 
     pub fn push(&mut self, token: OutputToken<T>) {
         self.line.push(token);
+    }
+}
+
+impl Default for PageConfig {
+    fn default() -> Self {
+        Self { elements_per_page: MAX_RESULT, page_to_get: 1 as usize }
     }
 }

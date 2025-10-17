@@ -14,14 +14,14 @@ pub struct ModelDictionary {
     pub model_versions: Vec<ModelVersionNumber>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModelStats {
     pub elements_stats: Option<CubsObjectReport>,
     pub relationships_stats: Option<CubsObjectReport>,
     pub version: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CubsObjectReport {
     pub all_count: u32,
     pub by_type: ElementCounts,
@@ -52,7 +52,7 @@ pub struct ElementCounts {
 }
 
 impl ModelDictionary {
-    pub fn from(model: &ModelData, model_versions: Vec<ModelVersionNumber>,) -> Self {
+    pub fn from(model: &ModelData, model_versions: Vec<ModelVersionNumber>) -> Self {
         let start_time = Instant::now();
 
         /* Generate stats */
@@ -115,50 +115,48 @@ impl ModelDictionary {
     }
 }
 
+impl ModelStats {
+    /* Get stats from elements ref */
+    pub fn from_elements(elements: &Vec<&Element>) -> Option<Self> {
+        let mut by_type: HashMap<String, u32> = HashMap::new();
+        let mut by_nature: HashMap<String, u32> = HashMap::new();
+        let count = elements.len() as u32;
+
+        for element in elements {
+            *by_type.entry(element.type_.clone()).or_insert(0 as u32) += 1;
+            *by_nature.entry(element.nature.clone()).or_insert(0 as u32) += 1;
+        }
+
+        // Construct Output
+        let mut element_count_by_type: Vec<ElementCount> = by_type
+            .into_iter()
+            .map(|(element, count)| ElementCount { element, count })
+            .collect();
+        element_count_by_type.sort_by(|a, b| b.count.cmp(&a.count));
+
+        let mut element_count_by_nature: Vec<ElementCount> = by_nature
+            .into_iter()
+            .map(|(element, count)| ElementCount { element, count })
+            .collect();
+        element_count_by_nature.sort_by(|a, b| b.count.cmp(&a.count));
+
+        Some(Self {
+            elements_stats: Some(CubsObjectReport {
+                all_count: count,
+                by_type: ElementCounts {
+                    value: element_count_by_type,
+                },
+                by_nature: ElementCounts {
+                    value: element_count_by_nature,
+                },
+            }),
+            relationships_stats: None,
+            version: 0,
+        })
+    }
+}
+
 // Helper method
-// fn insert_count(count_map: &mut HashMap<String, u32>, key: String, value: u32) {
-//     match count_map.get_mut(&key) {
-//         Some(count) => *count += value,
-//         None => {
-//             count_map.insert(key, value);
-//         }
-//     }
-// }
-
-// fn generate_element_ref_map<'a, F>(
-//     key_getter: F,
-//     element: &Vec<Element>,
-// ) -> HashMap<String, Vec<&Element>>
-// where
-//     F: Fn(&Element) -> String,
-// {
-//     let element_partitioned_map: HashMap<String, Vec<&Element>> =
-//         element.iter().fold(HashMap::new(), |mut acc, e| {
-//             let key = key_getter(e);
-//             let value = acc.entry(key).or_insert_with(|| Vec::new());
-//             value.push(&e);
-//             acc
-//         });
-//     element_partitioned_map
-// }
-
-// fn generate_relationship_ref_map<'a, F>(
-//     key_getter: F,
-//     element: &Vec<Relationship>,
-// ) -> HashMap<String, Vec<&Relationship>>
-// where
-//     F: Fn(&Relationship) -> String,
-// {
-//     let element_partitioned_map: HashMap<String, Vec<&Relationship>> =
-//         element.iter().fold(HashMap::new(), |mut acc, e| {
-//             let key = key_getter(e);
-//             let value = acc.entry(key).or_insert_with(|| Vec::new());
-//             value.push(&e);
-//             acc
-//         });
-//     element_partitioned_map
-// }
-
 pub fn generate_array_field_count(value: &Value, field_name: &str) -> Option<ElementCounts> {
     let array = value.as_array()?;
 

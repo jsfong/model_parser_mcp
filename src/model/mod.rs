@@ -1,5 +1,5 @@
 pub mod app_state;
-mod config;
+pub mod config;
 pub mod cubs_model;
 mod database_util;
 mod element_graph;

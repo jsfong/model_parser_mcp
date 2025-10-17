@@ -1,14 +1,13 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
+use std::time::Duration;
+
+use mini_moka::sync::Cache;
 
 use crate::model::cubs_model::ModelData;
 use crate::model::database_util::connect_to_db;
 use crate::model::element_graph::ElementGraph;
-use quick_cache::sync::Cache;
+// use quick_cache::sync::Cache;
 const CACHE_SIZE: usize = 2;
-
-// pub static APP_STATE: LazyLock<AppState> = LazyLock::new(|| {
-//     tokio::runtime::Runtime::new().unwrap().block_on(AppState::new())
-// });
 
 #[derive(Clone, Debug)]
 pub struct AppState {
@@ -22,26 +21,27 @@ impl AppState {
         // DB pool
         let pg_pool = connect_to_db().await;
 
-        // Model Cache
-        let model_cache: Arc<Cache<String, ModelData>> = Arc::new(Cache::new({
-            std::env::var("CACHE_SIZE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(CACHE_SIZE)
-        }));
+        // Moka Cache
+        let moka_model_cache: Cache<String, Arc<ModelData>> = Cache::builder()
+            .max_capacity(CACHE_SIZE as u64)
+            .time_to_live(Duration::from_secs(3600))
+            .time_to_idle(Duration::from_secs(600))
+            .build();
 
-        // Graph Cache
-        let graph_cache: Arc<Cache<String, ElementGraph>> = Arc::new(Cache::new({
-            std::env::var("CACHE_SIZE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(CACHE_SIZE)
-        }));
+        let moka_graph_cache: Cache<String, Arc<ElementGraph>> = Cache::builder()
+            .max_capacity(CACHE_SIZE as u64)
+            .time_to_live(Duration::from_secs(3600))
+            .time_to_idle(Duration::from_secs(600))
+            .build();
 
         AppState {
             pg_pool,
-            model_cache: QuickCache { data: model_cache },
-            graph_cache: QuickCache { data: graph_cache },
+            model_cache: QuickCache {
+                data: moka_model_cache,
+            },
+            graph_cache: QuickCache {
+                data: moka_graph_cache,
+            },
         }
     }
 
@@ -56,41 +56,61 @@ impl AppState {
     pub fn get_graph_cache(&self) -> QuickCache<ElementGraph> {
         self.graph_cache.clone()
     }
-
-    // pub fn global() -> &'static AppState {
-    //     &APP_STATE
-    // }
 }
 
-#[derive(Clone, Debug)]
-pub struct QuickCache<T> {
-    pub data: Arc<Cache<String, T>>,
+#[derive(Debug)]
+pub struct QuickCache<T>
+where
+    T: Send + Sync + 'static,
+{
+    data: Cache<String, Arc<T>>,
 }
 
-impl<T> QuickCache<T> {
-    pub fn get(&self, key: &str, version: &str) -> Option<T>
+impl<T> Clone for QuickCache<T>
+where
+    T: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+        }
+    }
+}
+
+impl<T> QuickCache<T>
+where
+    T: Send + Sync + 'static,
+{
+    pub fn new(capacity: u64) -> Self {
+        Self {
+            data: Cache::new(capacity),
+        }
+    }
+
+    pub fn get_ref(&self, key: &str, version: &str) -> Option<Arc<T>>
     where
-        T: Clone,
+        T: Clone + Send + Sync + 'static,
     {
         println!(
             "[QuickCache]Retrieving from cache with key: {} and version:{} ",
             key, version
         );
         let key = format!("{}-{}", key, version);
-        self.data.get(&key)
+        self.data.get(&key).map(|arc| Arc::clone(&arc))
     }
 
     pub fn insert(&self, key: &str, version: &str, value: &T)
     where
-        T: Clone,
+        T: Clone + Send + Sync + 'static,
     {
         println!(
             "[QuickCache] insert into cache with key: {} and version:{} of capacity: {}",
-             key, version, self.data.capacity()
+            key,
+            version,
+            self.data.entry_count()
         );
         let key = format!("{}-{}", key, version);
-        self.data.insert(key.to_string(), value.clone());
+        self.data.insert(key.to_string(), Arc::new(value.clone()));
     }
-
-  
 }
+

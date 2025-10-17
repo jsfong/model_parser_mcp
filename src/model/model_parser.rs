@@ -1,9 +1,9 @@
 use serde_json::Value;
 use sqlx::{Pool, Postgres};
-use std::time::Instant;
+use std::{fmt::Display, sync::Arc, time::Instant};
 
 use crate::model::{
-    app_state::QuickCache, config::PageConfig, cubs_model::{self, Element, FacetType, ModelData, ModelVersionNumber}, element_graph::ElementGraph, element_graph_parser::ElementGraphParser, element_parser::ElementConnectorBuilder, model_dict::ModelDictionary, model_error::ModelError, parser, utils::Utils
+    app_state::QuickCache, config::PageConfig, cubs_model::{self, Element, FacetType, ModelData, ModelVersionNumber}, element_graph::ElementGraph, element_graph_parser::ElementGraphParser, element_parser::ElementConnectorBuilder, model_dict::{ModelDictionary, ModelStats}, model_error::ModelError, parser, utils::Utils
 
 };
 
@@ -13,20 +13,22 @@ pub struct ModelParser<'a> {
     pg_pool: &'a Pool<Postgres>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ModelQueryResult {
     pub data: String,
     pub duration: String,
     pub page_count: Page,
     pub total_result_count: usize,
+    pub stats: Option<ModelStats>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Page {
     pub elements_per_page: usize,
     pub total_page: usize,
     pub current_page: usize,
 }
+
 
 impl<'a> ModelParser<'a> {
     pub fn new(
@@ -61,21 +63,20 @@ impl<'a> ModelParser<'a> {
             .unwrap_or_default();
         Utils::log_time(start_time, "Read model data version");
 
-        // Get model
-        let model_data = self
-            .get_model(&model_id, version_number, &model_version)
-            .await
-            .ok_or_else(|| ModelError::UnableToReadModel)?;
-        Utils::log_time(start_time, "Read model data");
+        // Get approriate version number
+        let version_number = ModelParser::get_version_number(version_number, &model_version);
 
-        //Build relationship graph
+        // Get model
+        let model_data = self.get_model_ref(&model_id, version_number).await?;
+
+        // Build relationship
         self.build_relationship_graph(&model_id, model_data.version, &model_data);
 
-        //Build stats
+        // Build dict
         let dict = ModelDictionary::from(&model_data, model_version);
         Utils::log_time(start_time, "Get model stats");
         println!(
-            "[parse_model] Successfully parse model with id {} \n",
+            "[get_model_stats_ref] Successfully parse model with id {} \n",
             model_id
         );
 
@@ -98,8 +99,9 @@ impl<'a> ModelParser<'a> {
         is_detail: bool,
     ) -> Result<ModelQueryResult, ModelError> {
         println!(
-            "[ModelParser - query_model] Querying model: {} with query: {} with depth: {} and page config: {:?}",
+            "[ModelParser - query_model] Querying model: {} with type: {} with query: {} with depth: {} and page config: {:?}",
             model_id,
+            types,
             query,
             depth,
             page_config,
@@ -124,17 +126,17 @@ impl<'a> ModelParser<'a> {
         let model_version = parser::read_model_data_versions(self.pg_pool, &model_id)
             .await
             .unwrap_or_default();
-        let model_data = self
-            .get_model(&model_id, &version_number, &model_version)
-            .await
-            .ok_or_else(|| ModelError::UnableToReadModel)?;
+        let i_version_number = ModelParser::get_version_number(&version_number, &model_version);
+        let model_data = self.get_model_ref(&model_id, i_version_number).await?;
         Utils::log_time(start_time, "Read model data");
 
         // Perform Filtering
+        let filtering_start_time = Instant::now();
+
         // Get subgraph
         let subgraph_elements: Vec<String> = if is_parse_subgraph && !id.is_empty() {
             let graph_cache = &self.graph_cache;
-            let graph = if let Some(graph) = graph_cache.get(&model_id, &version_number) {
+            let graph = if let Some(graph) = graph_cache.get_ref(&model_id, &version_number) {
                 graph
             } else {
                 // Build graph if not found
@@ -146,7 +148,8 @@ impl<'a> ModelParser<'a> {
                 // Add to cache
                 graph_cache.insert(&model_id, &version_number, &built_graph);
 
-                built_graph
+                // Get referance
+                graph_cache.get_ref(&model_id, &version_number).unwrap()
             };
 
             ElementGraphParser::parse_graph(&graph, &id, 0, 99)
@@ -157,10 +160,6 @@ impl<'a> ModelParser<'a> {
         };
 
         //Filter id
-        println!(
-            "[ModelParser - query_model] Pre-filter element count {}",
-            subgraph_elements.len()
-        );
         let mut filtered_elements = if id.is_empty() {
             model_data.get_elements()
         } else if is_parse_subgraph && !subgraph_elements.is_empty() {
@@ -175,6 +174,11 @@ impl<'a> ModelParser<'a> {
                 .map(|e| vec![e])
                 .unwrap_or_else(|| Vec::new())
         };
+          
+        println!(
+            "[ModelParser - query_model] Pre-filter element count {} ",
+            filtered_elements.len()
+        );
 
         //filter nature
         filtered_elements.retain(|e| match natures.as_str() {
@@ -187,8 +191,14 @@ impl<'a> ModelParser<'a> {
             "All" => true,
             _ => *e.type_ == types,
         });
+        Utils::log_time(filtering_start_time, "Filtering model data");
+        println!("[ModelParser - query_model] {} elements after filtered", filtered_elements.len() );
+
+        // Generate Stats
+        let stats = ModelStats::from_elements(&filtered_elements);
 
         //Apply json pointer
+        let json_pointer_start_time = Instant::now();
         let facet_type: Option<FacetType> = match facet_type.as_str() {
             "dynamicFacets" => Some(FacetType::DynamicFacets),
             "coreFacets" => Some(FacetType::CoreFacets),
@@ -209,8 +219,10 @@ impl<'a> ModelParser<'a> {
                 .collect()
         };
         let filtered_element_len = filtered_elements.len();
+        Utils::log_time(json_pointer_start_time, "Apply json pointer model data");
 
         //Limit & Pagination
+        let limittation_and_pagination_start_time = Instant::now();
         let elements_chunks: Vec<&[Value]> = filtered_elements
             .chunks(page_config.elements_per_page)
             .collect();
@@ -240,6 +252,10 @@ impl<'a> ModelParser<'a> {
             }
             false => serde_json::to_string_pretty(&limited_query_result).unwrap(),
         };
+        Utils::log_time(
+            limittation_and_pagination_start_time,
+            "Apply paggination and limitation model data",
+        );
 
         // Log time
         Utils::log_time(start_time, "ModelParser - query_model");
@@ -254,23 +270,40 @@ impl<'a> ModelParser<'a> {
             ),
             page_count: page,
             total_result_count: filtered_elements.len(),
+            stats: stats,
         })
     }
 
-    async fn get_model(
+    async fn get_model_ref(
         &self,
         model_id: &String,
-        version_number: &str,
-        model_versions: &Vec<ModelVersionNumber>,
-    ) -> Option<ModelData> {
-        //Read saved model
-        let version_number = ModelParser::get_version_number(version_number, model_versions);
+        version_number: i32,
+    ) -> Result<Arc<ModelData>, ModelError> {
+        // Get from cache else from DB
         let model_data =
-            parser::read_model_data(self.pg_pool, &self.model_cache, &model_id, version_number)
-                .await
-                .ok();
+            match parser::get_model_from_cache(&self.model_cache, &model_id, version_number) {
+                Some(cached_model) => cached_model,
+                None => {
+                    let cached_model = parser::get_model_from_db(
+                        self.pg_pool,
+                        &self.model_cache,
+                        &model_id,
+                        version_number,
+                    )
+                    .await
+                    .ok_or_else(|| {
+                        println!(
+                "[get_model_stats_ref] model id {} not found or having issue retrieve model",
+                model_id
+            );
+                        ModelError::ModelNotFound(model_id.clone(), version_number.to_string())
+                    })?;
 
-        model_data
+                    cached_model
+                }
+            };
+
+        Ok(model_data)
     }
 
     fn build_relationship_graph(
@@ -278,7 +311,7 @@ impl<'a> ModelParser<'a> {
         model_id: &String,
         version_number: u32,
         model_data: &ModelData,
-    ) -> Option<ElementGraph> {
+    ) -> Option<Arc<ElementGraph>> {
         println!("[ModelParser - build_relationship_graph] Building relationship graph");
         let start_time = Instant::now();
         let graph_cache = &self.graph_cache;
@@ -286,7 +319,7 @@ impl<'a> ModelParser<'a> {
         let relationships = &model_data.relationships;
 
         //Check if exist in cache
-        let existing_graph = graph_cache.get(&model_id, &version_number.to_string());
+        let existing_graph = graph_cache.get_ref(&model_id, &version_number.to_string());
 
         //If not exist, building graph
         if version_number != 0 && existing_graph.is_none() {
@@ -294,7 +327,10 @@ impl<'a> ModelParser<'a> {
             let graph = match ElementConnectorBuilder::build_graph(elements, relationships) {
                 Ok(graph) => {
                     graph_cache.insert(&model_id, &version_number.to_string(), &graph);
-                    Some(graph)
+
+                    //Get reference
+                    let cached_graph = graph_cache.get_ref(&model_id, &version_number.to_string()).unwrap();
+                    Some(cached_graph)
                 }
                 Err(_) => None,
             };
