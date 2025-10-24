@@ -77,6 +77,32 @@ pub struct ModelTypeQueryResult {
     pub total_result_count: usize,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ModelQueryWithFilterRequest {
+    #[schemars(description = "Unique identifier for a model in the format of UUID")]
+    model_id: String,
+    #[schemars(description = "Model version")]
+    version_number: Option<String>,
+    #[schemars(description = "Result pagination configuration")]
+    page_config: PageConfig,
+    #[schemars(description = "Elements filtering configuration")]
+    filter: ElementFilter,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ElementFilter {
+    #[schemars(description = "Filter for specific id. To allow all, set to \"\"")]
+    id: String,
+    #[schemars(
+        description = "Filter for elements nested under a root element with id. To allow all, set to \"\""
+    )]
+    sub_graph_root_id: String,
+    #[schemars(description = "Filter for specific type. To allow all, set to All")]
+    type_: String,
+    #[schemars(description = "Filter for specific nature. To allow all, set to All")]
+    nature: String,
+}
+
 #[tool_router]
 impl ModelParserTool {
     pub fn new(app_state: AppState) -> Self {
@@ -139,7 +165,6 @@ impl ModelParserTool {
             page_config,
         }): Parameters<ModelTypeQueryRequest>,
     ) -> String {
-
         let model_parser = ModelParser::new(
             self.app_state.get_model_cache(),
             self.app_state.get_graph_cache(),
@@ -185,6 +210,76 @@ impl ModelParserTool {
             }
         }
     }
+
+    #[tool(description = "Get elements with filter")]
+    async fn get_element_with_filter(
+        &self,
+        Parameters(ModelQueryWithFilterRequest {
+            model_id,
+            version_number,
+            page_config,
+            filter,
+        }): Parameters<ModelQueryWithFilterRequest>,
+    ) -> String {
+
+        println!("[get_element_with_filter] model id: {}, version: {:?}, filter: {:?}", model_id, version_number, filter);
+        let model_parser = ModelParser::new(
+            self.app_state.get_model_cache(),
+            self.app_state.get_graph_cache(),
+            self.app_state.get_pg_pool_ref(),
+        );
+        let version_number = version_number.unwrap_or("".to_string());
+
+        // Request mapping
+        let mut filter_id = EMPTY.to_owned();
+        let mut is_parse_subgraph = false;
+        if !filter.id.is_empty() && filter.sub_graph_root_id.is_empty() {
+            filter_id = filter.id;
+        } else if filter_id.is_empty() && !filter.sub_graph_root_id.is_empty() {
+            filter_id = filter.sub_graph_root_id;
+            is_parse_subgraph = true;
+        }
+
+        // Perform query
+        let result = model_parser
+            .query_model(
+                model_id.clone(),
+                version_number,
+                filter_id,
+                is_parse_subgraph,
+                filter.type_,
+                filter.nature,
+                EMPTY.to_owned(),
+                MAX_DEPTH,
+                page_config,
+                EMPTY.to_owned(),
+                false,
+            )
+            .await;
+
+        match result {
+            Ok(result) => {
+                let output = ModelTypeQueryResult {
+                    result: result.data,
+                    elements_per_page: result.page_count.elements_per_page,
+                    total_page: result.page_count.total_page,
+                    current_page: result.page_count.current_page,
+                    total_result_count: result.total_result_count,
+                };
+
+                println!("page result: {:?}", result.page_count);
+                serde_json::to_string_pretty(&output).unwrap()
+            }
+            Err(e) => {
+                let error = ModelStatsErrorResult {
+                    model_id,
+                    error_msg: e.to_string(),
+                };
+                serde_json::to_string_pretty(&error).unwrap()
+            }
+        }
+    }
+
     // TODO get_element_with_nature
 }
 

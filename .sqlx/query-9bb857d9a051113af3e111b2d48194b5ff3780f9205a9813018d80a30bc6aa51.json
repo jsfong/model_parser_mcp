@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT model_id, vers_no, saved_gzip FROM cubs_object_model.saved_model WHERE model_id = $1 and vers_no = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "model_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "vers_no",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "saved_gzip",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9bb857d9a051113af3e111b2d48194b5ff3780f9205a9813018d80a30bc6aa51"
+}

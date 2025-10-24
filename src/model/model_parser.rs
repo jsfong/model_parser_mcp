@@ -3,8 +3,16 @@ use sqlx::{Pool, Postgres};
 use std::{fmt::Display, sync::Arc, time::Instant};
 
 use crate::model::{
-    app_state::QuickCache, config::PageConfig, cubs_model::{self, Element, FacetType, ModelData, ModelVersionNumber}, element_graph::ElementGraph, element_graph_parser::ElementGraphParser, element_parser::ElementConnectorBuilder, model_dict::{ModelDictionary, ModelStats}, model_error::ModelError, parser, utils::Utils
-
+    app_state::QuickCache,
+    config::PageConfig,
+    cubs_model::{self, Element, FacetType, ModelData, ModelVersionNumber},
+    element_graph::ElementGraph,
+    element_graph_parser::ElementGraphParser,
+    element_parser::ElementConnectorBuilder,
+    model_dict::{ModelDictionary, ModelStats},
+    model_error::ModelError,
+    parser,
+    utils::Utils,
 };
 
 pub struct ModelParser<'a> {
@@ -29,7 +37,6 @@ pub struct Page {
     pub current_page: usize,
 }
 
-
 impl<'a> ModelParser<'a> {
     pub fn new(
         model_cache: QuickCache<ModelData>,
@@ -52,8 +59,7 @@ impl<'a> ModelParser<'a> {
         let model_id = model_id.to_owned();
         println!(
             "[ModelParser - get_model_stats] Getting model stats of {} with version {}",
-            model_id,
-            version_number
+            model_id, version_number
         );
         let start_time = Instant::now();
 
@@ -99,12 +105,18 @@ impl<'a> ModelParser<'a> {
         is_detail: bool,
     ) -> Result<ModelQueryResult, ModelError> {
         println!(
-            "[ModelParser - query_model] Querying model: {} with type: {} with query: {} with depth: {} and page config: {:?}",
+            "[ModelParser - query_model] model_id: {}, version_number: {}, id: {}, is_parse_subgraph: {}, types: {}, natures: {}, query: {}, depth: {}, page_config: {:?}, facet_type: {}, is_detail: {}",
             model_id,
+            version_number,
+            id,
+            is_parse_subgraph,
             types,
+            natures,
             query,
             depth,
             page_config,
+            facet_type,
+            is_detail
         );
 
         // Input Validation
@@ -174,7 +186,7 @@ impl<'a> ModelParser<'a> {
                 .map(|e| vec![e])
                 .unwrap_or_else(|| Vec::new())
         };
-          
+
         println!(
             "[ModelParser - query_model] Pre-filter element count {} ",
             filtered_elements.len()
@@ -192,7 +204,10 @@ impl<'a> ModelParser<'a> {
             _ => *e.type_ == types,
         });
         Utils::log_time(filtering_start_time, "Filtering model data");
-        println!("[ModelParser - query_model] {} elements after filtered", filtered_elements.len() );
+        println!(
+            "[ModelParser - query_model] {} elements after filtered",
+            filtered_elements.len()
+        );
 
         // Generate Stats
         let stats = ModelStats::from_elements(&filtered_elements);
@@ -231,12 +246,10 @@ impl<'a> ModelParser<'a> {
             total_page: elements_chunks.len(),
             current_page: page_config.page_to_get,
         };
-        let limited_query_result = elements_chunks[page_config.page_to_get - 1];
+        let limited_query_result = elements_chunks[page_config.page_to_get - 1]; //BUG handle no result found
         println!(
             "[ModelParser - query_model] Getting page {} of {} with total element {}",
-            page.current_page,
-            page.total_page,
-            filtered_element_len
+            page.current_page, page.total_page, filtered_element_len
         );
 
         //Depth
@@ -329,7 +342,9 @@ impl<'a> ModelParser<'a> {
                     graph_cache.insert(&model_id, &version_number.to_string(), &graph);
 
                     //Get reference
-                    let cached_graph = graph_cache.get_ref(&model_id, &version_number.to_string()).unwrap();
+                    let cached_graph = graph_cache
+                        .get_ref(&model_id, &version_number.to_string())
+                        .unwrap();
                     Some(cached_graph)
                 }
                 Err(_) => None,

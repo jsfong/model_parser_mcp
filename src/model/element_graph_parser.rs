@@ -131,7 +131,7 @@ impl ElementGraphParser {
             let id = &path.1;
             let relationship_id = &path.0;
             if let Some(parent_connector) = source_graph.get_connection(&id) {
-                println!("[ElementGraphParser - parse_child] Adding element {} with relationship {} to graph at level: {}", parent_connector.get_element_id(), relationship_id, current_level);
+                // println!("[ElementGraphParser - parse_child] Adding element {} with relationship {} to graph at level: {}", parent_connector.get_element_id(), relationship_id, current_level);
 
                 let mut cloned_parent_connector = parent_connector.clone();
                 // Truncate the path if reach limit
