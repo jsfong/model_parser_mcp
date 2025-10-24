@@ -17,5 +17,5 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - ./.env:/app/.env
+      - ./.env:/.env
 ```
