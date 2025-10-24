@@ -3,7 +3,7 @@ use rmcp::transport::sse_server::{SseServer, SseServerConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use dotenv::dotenv;
 
-const BIND_ADDRESS: &str = "127.0.0.1:8001";
+const BIND_ADDRESS: &str = "0.0.0.0:8001";
 
 mod model_parser_tool;
 use model_parser_tool::ModelParserTool;

@@ -24,4 +24,7 @@ RUN cargo build --release
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /app/target/release/model-parser-mcp /usr/local/bin/
+
+EXPOSE 8001
+
 ENTRYPOINT ["model-parser-mcp"]
